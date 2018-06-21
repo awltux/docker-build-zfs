@@ -10,7 +10,7 @@ run_clean() {
   local targetDir=${1:-"${_targetDir}"}
 
   if [[ -e ${targetDir} ]]; then
-    echo "[INFO] Clean target dir: ${targetDir} "
+    echo "[INFO] Clean target dir: ${targetDir}"
     if [[ -e ${targetDir}/.target ]]; then
       read -n 1 -p "Press any key to continue"
       rm -rf ${targetDir}
@@ -33,74 +33,16 @@ run_clean() {
     popd
   fi
 
-  dnf clean all
-  
 }
 
-run_dockerfile() {
-    
-#  yum groupinstall -y "Development Tools"
-#  yum install -y \
-#    koji autoconf automake libtool wget libtirpc-devel rpm-build \
-#    zlib-devel libuuid-devel libattr-devel \
-#    libblkid-devel libselinux-devel libudev-devel \
-#    parted lsscsi ksh openssl-devel elfutils-libelf-devel
-    
-  yum groupinstall -y "C Development Tools and Libraries"
-  yum install -y \
-     koji \
-     zlib-devel libuuid-devel libattr-devel \
-     libblkid-devel libselinux-devel libudev-devel \
-     parted lsscsi ksh openssl-devel elfutils-libelf-devel
-}
-
-install_kernelPackages() {
-  local kernelRelease=${1:-$(uname -r)}
-  local rpmCacheDir="~/.rpm_cache"
-
-  pushd "${rpmCacheDir}"
-      # Use koji to download the atomic kernel packages
-      if [[ ! -e kernel-core-${kernelRelease}.rpm ]]; then 
-        koji download-build --rpm --arch=${processorType} \
-            kernel-core-${kernelRelease}
-      fi
-      if [[ ! -e kernel-devel-${kernelRelease}.rpm ]]; then 
-        koji download-build --rpm --arch=${processorType} \
-            kernel-devel-${kernelRelease}
-      fi
-      if [[ ! -e kernel-modules-${kernelRelease}.rpm ]]; then 
-        koji download-build --rpm --arch=${processorType} \
-            kernel-modules-${kernelRelease}
-      fi
-      dnf install -y --cacheonly \
-            kernel-core-${kernelRelease}.rpm \
-            kernel-devel-${kernelRelease}.rpm \
-            kernel-modules-${kernelRelease}.rpm
-  popd
-
-  pushd ${_targetDir}
-      # Use koji to download the atomic kernel packages
-      if [[ ! -e kernel-core-${kernelRelease}.rpm ]]; then 
-        cp ${rpmCacheDir}/kernel-core-${kernelRelease}.rpm .
-      fi
-      if [[ ! -e kernel-devel-${kernelRelease}.rpm ]]; then 
-        cp ${rpmCacheDir}/kernel-devel-${kernelRelease}.rpm .
-      fi
-      if [[ ! -e kernel-modules-${kernelRelease}.rpm ]]; then 
-        cp ${rpmCacheDir}/kernel-modules-${kernelRelease}.rpm .
-      fi
-      dnf install -y --cacheonly \
-            kernel-core-${kernelRelease}.rpm \
-            kernel-devel-${kernelRelease}.rpm \
-            kernel-modules-${kernelRelease}.rpm
-  popd
-
-  pushd /usr/src/kernels/${kernelRelease}
-    make prepare
-  popd
+log::infoBanner() {
+  echo "##################################################"
+  echo "## $1"
+  echo "##################################################"
 }
 
 build_spl() {
+  log::infoBanner "${FUNCNAME}"
   local kernelRelease=${1:-$(uname -r)}
 
   pushd ${_targetDir}
@@ -127,6 +69,7 @@ build_spl() {
 }
 
 build_zfs() {
+  log::infoBanner "${FUNCNAME}"
   local kernelRelease=${1:-$(uname -r)}
 
   pushd ${_targetDir}
@@ -154,6 +97,18 @@ build_zfs() {
 }
 
 run_build() {
+  local dockerFrom=${1:-"${_DOCKER_FROM_IMAGE_NAME}"}
+  local dockerOutput
+  
+  docker run -it --rm \
+      --workdir "/mnt/workspace/${_projectName}" \
+      -v ${_workspaceDir}:/mnt/workspace \
+      localhost/${dockerFrom} \
+      ./build-zfs.sh _build $(uname -r)
+  
+}
+
+_run_build() {
   local kernelRelease=${1:-$(uname -r)}
   local processorType=${2:-'x86_64'}
 
@@ -162,7 +117,6 @@ run_build() {
 	exit 1
   fi
 
-  install_kernelPackages ${kernelRelease}
   build_spl ${kernelRelease}
   build_zfs ${kernelRelease}
   
@@ -192,18 +146,48 @@ Commands:
 HEREDOC
 }
 
-build_dockerfile() {
+build_dockerimage() {
   local targetDir=${_targetDir}
   local dockerFrom=${1:-"${_DOCKER_FROM_IMAGE_NAME}"}
+  local kernelRelease
+  kernelRelease=${2:-"$(uname -r)"}
   local dockerOutput
   
-  cp templates/Dockerfile ${targetDir}/
-  sed -i "s/%DOCKER_FROM_IMAGE_NAME%/${_DOCKER_FROM_IMAGE_NAME}/" ${targetDir}/Dockerfile
-  cp $0 ${targetDir}/
+  local rpmCacheDir="${_rpmCacheDir}"
+
+  echo "kernelRelease=${kernelRelease}"
+  echo "rpmCacheDir=${rpmCacheDir}"
+
+  pushd "${rpmCacheDir}"
+    # Use koji to download the atomic kernel packages
+    if [[ ! -e kernel-core-${kernelRelease}.rpm ]]; then 
+      koji download-build --rpm --arch=${processorType} \
+          kernel-core-${kernelRelease}
+    fi
+    cp kernel-core-${kernelRelease}.rpm ${targetDir}
+
+    if [[ ! -e kernel-devel-${kernelRelease}.rpm ]]; then 
+      koji download-build --rpm --arch=${processorType} \
+          kernel-devel-${kernelRelease}
+    fi
+    cp kernel-devel-${kernelRelease}.rpm ${targetDir}
+
+    if [[ ! -e kernel-modules-${kernelRelease}.rpm ]]; then 
+      koji download-build --rpm --arch=${processorType} \
+          kernel-modules-${kernelRelease}
+    fi
+    cp kernel-modules-${kernelRelease}.rpm ${targetDir}
+  popd
+
+  # Create Dockerfile staging dir
+  if [[ ! -e ${targetDir}/Dockerfile ]]; then
+    cp templates/Dockerfile ${targetDir}/
+    sed -i "s/%DOCKER_FROM_IMAGE_NAME%/${dockerFrom}/" ${targetDir}/Dockerfile
+    sed -i "s/%KERNEL_RELEASE%/${kernelRelease}/g" ${targetDir}/Dockerfile
+  fi
  
-  docker build -t test-${_DOCKER_FROM_IMAGE_NAME} ${targetDir}
-  
-#  dockerOutput=$(docker run -it --rm -v /root:/root ${dockerFrom} /bin/bash)
+  # Build Docker image from staging dir
+  docker build -t localhost/${dockerFrom} ${targetDir}
 
 }
 
@@ -220,14 +204,14 @@ run_command() {
     'clean')
       run_clean "$@"
       ;;
-    'build_dockerfile')
-      build_dockerfile "$@"
-      ;;
-    '_build_dockerfile')
-      run_dockerfile "$@"
+    'build_dockerimage')
+      build_dockerimage "$@"
       ;;
     'build')
       run_build "$@"
+      ;;
+    '_build')
+      _run_build "$@"
       ;;
     'build_spl')
       build_spl "$@"
@@ -264,10 +248,16 @@ main_function() {
   local _projectDir
   local _workspaceDir
   local _targetDir
+  local _rpmCacheDir
+
   _invocationDir=$(dirname $(realpath $0))
   _projectDir=${_invocationDir}
+  _projectName=$(basename ${_projectDir})
   _workspaceDir=$(realpath ${_projectDir}/..)
   _targetDir=${_projectDir}/target
+  _rpmCacheDir=${_workspaceDir}/.rpm_cache
+
+  mkdir -p ${_rpmCacheDir}
 
   run_command "$@"
 }
