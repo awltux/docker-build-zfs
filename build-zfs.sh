@@ -45,24 +45,15 @@ build_spl() {
   log::infoBanner "${FUNCNAME}"
   local kernelRelease=${1:-$(uname -r)}
 
-  pushd ${_targetDir}
-      # Update/Get the spl source code
-      if [[ -e spl ]]; then
-        pushd spl
-        git pull
-      else
-        git clone -b ${_SPL_BRANCH} https://github.com/zfsonlinux/spl.git
-        pushd spl
-      fi
-	  
-	  # Delete existing output files
+  pushd ${_targetDir}/spl
+      # Delete existing output files
       find . -name \*.ko -delete
 	  
       # Now build it
       ./autogen.sh
       ./configure \
         --with-linux=/usr/src/kernels/${kernelRelease} \
-		--enable-linux-builtin 
+	--enable-linux-builtin 
       ./copy-builtin /usr/src/kernels/${kernelRelease}
   popd
 
@@ -72,17 +63,8 @@ build_zfs() {
   log::infoBanner "${FUNCNAME}"
   local kernelRelease=${1:-$(uname -r)}
 
-  pushd ${_targetDir}
-      # Update/Get the zfs source code
-      if [[ -e zfs ]]; then
-        pushd zfs
-        git pull
-      else
-        git clone -b ${_ZFS_BRANCH} https://github.com/zfsonlinux/zfs.git
-        pushd zfs
-      fi
-	  
-	  # Delete existing output files
+  pushd ${_targetDir}/zfs
+      # Delete existing output files
       find . -name \*.ko -delete
 	  
       # Now build it
@@ -100,6 +82,27 @@ run_build() {
   local dockerFrom=${1:-"${_DOCKER_FROM_IMAGE_NAME}"}
   local dockerOutput
   
+  pushd ${_targetDir}
+      # Update/Get the spl source code
+      if [[ -e spl ]]; then
+        pushd spl
+        git pull
+        popd
+      else
+        git clone -b ${_SPL_BRANCH} https://github.com/zfsonlinux/spl.git
+      fi
+
+      # Update/Get the zfs source code
+      if [[ -e zfs ]]; then
+        pushd zfs
+        git pull
+        popd
+      else
+        git clone -b ${_ZFS_BRANCH} https://github.com/zfsonlinux/zfs.git
+      fi
+	  
+  popd
+	  
   docker run -it --rm \
       --workdir "/mnt/workspace/${_projectName}" \
       -v ${_workspaceDir}:/mnt/workspace \

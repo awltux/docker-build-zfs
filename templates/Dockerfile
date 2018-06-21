@@ -12,7 +12,7 @@ RUN yum install -y \
      indent ltrace oprofile valgrind ElectricFence astyle cbmc check \
      cmake coan cproto insight nasm pscan remake scons scorep \
      splint trinity elfutils yasm zzuf \
-     koji \
+     koji git \
      zlib-devel libuuid-devel libattr-devel \
      libblkid-devel libselinux-devel libudev-devel \
      parted lsscsi ksh openssl-devel elfutils-libelf-devel
