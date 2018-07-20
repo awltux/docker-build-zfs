@@ -53,8 +53,11 @@ build_spl() {
       ./autogen.sh
       ./configure \
         --with-linux=/usr/src/kernels/${kernelRelease} \
-	--enable-linux-builtin 
+        --with-linux-obj=/usr/src/kernels/${kernelRelease} \
+	--enable-linux-builtin=yes 
       ./copy-builtin /usr/src/kernels/${kernelRelease}
+      make -s -j$(nproc)
+      make -j1 pkg-utils pkg-kmod module
   popd
 
 }
@@ -70,8 +73,10 @@ build_zfs() {
       # Now build it
       ./autogen.sh
       ./configure \
-        --with-linux=/usr/lib/modules/${kernelRelease}/source \
-        --with-linux-obj=/usr/lib/modules/${kernelRelease}/build
+        --with-linux=/usr/src/kernels/${kernelRelease} \
+        --with-linux-obj=/usr/src/kernels/${kernelRelease}
+#        --with-linux=/usr/lib/modules/${kernelRelease}/source \
+#        --with-linux-obj=/usr/lib/modules/${kernelRelease}/build
       make -s -j$(nproc)
       make -j1 pkg-utils pkg-kmod
   popd
@@ -80,6 +85,8 @@ build_zfs() {
 
 run_build() {
   local dockerFrom=${1:-"${_DOCKER_FROM_IMAGE_NAME}"}
+  local kernelRelease
+  kernelRelease=${2:-"$(uname -r)"}
   local dockerOutput
   
   pushd ${_targetDir}
@@ -106,19 +113,23 @@ run_build() {
   docker run -it --rm \
       --workdir "/mnt/workspace/${_projectName}" \
       -v ${_workspaceDir}:/mnt/workspace \
-      localhost/${dockerFrom} \
-      ./build-zfs.sh _build $(uname -r)
+      localhost/${dockerFrom}-${kernelRelease} \
+      ./build-zfs.sh _build ${kernelRelease}
   
 }
 
 _run_build() {
-  local kernelRelease=${1:-$(uname -r)}
+  local kernelRelease
+  kernelRelease=${1:-"$(uname -r)"}
   local processorType=${2:-'x86_64'}
 
   if ! command -v koji >/dev/null 2>&1; then
     echo "[ERROR] Missing command in docker image. Run '$0 dockerfile'"
 	exit 1
   fi
+
+  # TODO: Move to Dockerfile
+  yum install -y file libtirpc-devel rpm-build 
 
   build_spl ${kernelRelease}
   build_zfs ${kernelRelease}
@@ -190,7 +201,7 @@ build_dockerimage() {
   fi
  
   # Build Docker image from staging dir
-  docker build -t localhost/${dockerFrom} ${targetDir}
+  docker build -t localhost/${dockerFrom}-${kernelRelease} ${targetDir}
 
 }
 

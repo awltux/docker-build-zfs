@@ -15,7 +15,8 @@ RUN yum install -y \
      koji git \
      zlib-devel libuuid-devel libattr-devel \
      libblkid-devel libselinux-devel libudev-devel \
-     parted lsscsi ksh openssl-devel elfutils-libelf-devel
+     parted lsscsi ksh openssl-devel elfutils-libelf-devel \
+     file libtirpc-devel
 
 COPY kernel-*-%KERNEL_RELEASE%.rpm ./
 
