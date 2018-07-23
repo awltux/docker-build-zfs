@@ -16,15 +16,28 @@ RUN yum install -y \
      zlib-devel libuuid-devel libattr-devel \
      libblkid-devel libselinux-devel libudev-devel \
      parted lsscsi ksh openssl-devel elfutils-libelf-devel \
-     file libtirpc-devel
+     file libtirpc-devel rpm-build
 
-COPY kernel-*-%KERNEL_RELEASE%.rpm ./
+# Koji is only relevant for Fedora
+RUN koji download-build --rpm --arch=%PROCESSOR_ARCH% \
+          kernel-core-%KERNEL_RELEASE%
 
-RUN yum install -y \
+RUN koji download-build --rpm --arch=%PROCESSOR_ARCH% \
+          kernel-devel-%KERNEL_RELEASE%
+
+RUN koji download-build --rpm --arch=%PROCESSOR_ARCH% \
+          kernel-modules-%KERNEL_RELEASE%
+
+RUN yum localinstall -y \
      kernel-core-%KERNEL_RELEASE%.rpm \
      kernel-devel-%KERNEL_RELEASE%.rpm \
      kernel-modules-%KERNEL_RELEASE%.rpm
 
-RUN cd /usr/src/kernels/%KERNEL_RELEASE% &&\
-    make prepare
+#RUN cd /usr/src/kernels/%KERNEL_RELEASE% &&\
+#    make prepare
 
+# Change this to trigger and effectively date/tag a full re-build
+LABEL build="20180718001"
+
+# Create an updated image; improves build times
+RUN yum -y update

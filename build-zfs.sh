@@ -44,10 +44,12 @@ log::infoBanner() {
 build_spl() {
   log::infoBanner "${FUNCNAME}"
   local kernelRelease=${1:-$(uname -r)}
+  local processorType=$(echo "${kernelRelease}" | rev | cut -d. -f1 | rev)
 
   pushd ${_targetDir}/spl
       # Delete existing output files
       find . -name \*.ko -delete
+      find . -name \*.rpm -delete
 	  
       # Now build it
       ./autogen.sh
@@ -55,9 +57,15 @@ build_spl() {
         --with-linux=/usr/src/kernels/${kernelRelease} \
         --with-linux-obj=/usr/src/kernels/${kernelRelease} \
 	--enable-linux-builtin=yes 
-      ./copy-builtin /usr/src/kernels/${kernelRelease}
-      make -s -j$(nproc)
-      make -j1 pkg-utils pkg-kmod module
+#      ./copy-builtin /usr/src/kernels/${kernelRelease}
+      make -s -j$(nproc) rpm
+#      make -j1 pkg-utils pkg-kmod
+#      # FIXME: No idea why 'make module' isn't creating 'module/Module.symvers'
+#      cd module
+#      make 
+      yum localinstall -y \
+         kmod-spl-${kernelRelease}-${_RELEASE_BRANCH}*.rpm \
+         spl-${kernelRelease}*.${processorType}.rpm 
   popd
 
 }
@@ -75,13 +83,34 @@ build_zfs() {
       ./configure \
         --with-linux=/usr/src/kernels/${kernelRelease} \
         --with-linux-obj=/usr/src/kernels/${kernelRelease}
-#        --with-linux=/usr/lib/modules/${kernelRelease}/source \
-#        --with-linux-obj=/usr/lib/modules/${kernelRelease}/build
-      make -s -j$(nproc)
-      make -j1 pkg-utils pkg-kmod
+      make -s -j$(nproc) rpm
+#      make -j1 pkg-utils pkg-kmod
+      yum localinstall -y
+         kmod-zfs-${kernelRelease}-${_RELEASE_BRANCH}*.${processorType}.rpm \
+         zfs-${_RELEASE_BRANCH}*.${processorType}.rpm \
+         libnvpair1-${_RELEASE_BRANCH}*.${processorType}.rpm \
+         libuutil1-${_RELEASE_BRANCH}*.${processorType}.rpm \
+         libzfs2-${_RELEASE_BRANCH}*.${processorType}.rpm \
+         libzpool2-${_RELEASE_BRANCH}*.${processorType}.rpm \
+         zfs-dracut-${_RELEASE_BRANCH}*.${processorType}.rpm
   popd
 
 }
+
+run_shell() {
+  local dockerFrom=${1:-"${_DOCKER_FROM_IMAGE_NAME}"}
+  local kernelRelease
+  kernelRelease=${2:-"$(uname -r)"}
+  local dockerOutput
+  
+  docker run -it --rm \
+      --workdir "/mnt/workspace/${_projectName}" \
+      -v ${_workspaceDir}:/mnt/workspace \
+      localhost/${dockerFrom}-${kernelRelease} \
+      /bin/bash 
+  
+}
+
 
 run_build() {
   local dockerFrom=${1:-"${_DOCKER_FROM_IMAGE_NAME}"}
@@ -93,7 +122,8 @@ run_build() {
       # Update/Get the spl source code
       if [[ -e spl ]]; then
         pushd spl
-        git pull
+          git fetch
+          git checkout ${_SPL_BRANCH}
         popd
       else
         git clone -b ${_SPL_BRANCH} https://github.com/zfsonlinux/spl.git
@@ -102,7 +132,8 @@ run_build() {
       # Update/Get the zfs source code
       if [[ -e zfs ]]; then
         pushd zfs
-        git pull
+          git fetch
+          git checkout ${_ZFS_BRANCH}
         popd
       else
         git clone -b ${_ZFS_BRANCH} https://github.com/zfsonlinux/zfs.git
@@ -127,9 +158,6 @@ _run_build() {
     echo "[ERROR] Missing command in docker image. Run '$0 dockerfile'"
 	exit 1
   fi
-
-  # TODO: Move to Dockerfile
-  yum install -y file libtirpc-devel rpm-build 
 
   build_spl ${kernelRelease}
   build_zfs ${kernelRelease}
@@ -165,38 +193,16 @@ build_dockerimage() {
   local dockerFrom=${1:-"${_DOCKER_FROM_IMAGE_NAME}"}
   local kernelRelease
   kernelRelease=${2:-"$(uname -r)"}
+  local processorType=${3:-"x86_64"}
   local dockerOutput
-  
-  local rpmCacheDir="${_rpmCacheDir}"
 
   echo "kernelRelease=${kernelRelease}"
-  echo "rpmCacheDir=${rpmCacheDir}"
-
-  pushd "${rpmCacheDir}"
-    # Use koji to download the atomic kernel packages
-    if [[ ! -e kernel-core-${kernelRelease}.rpm ]]; then 
-      koji download-build --rpm --arch=${processorType} \
-          kernel-core-${kernelRelease}
-    fi
-    cp kernel-core-${kernelRelease}.rpm ${targetDir}
-
-    if [[ ! -e kernel-devel-${kernelRelease}.rpm ]]; then 
-      koji download-build --rpm --arch=${processorType} \
-          kernel-devel-${kernelRelease}
-    fi
-    cp kernel-devel-${kernelRelease}.rpm ${targetDir}
-
-    if [[ ! -e kernel-modules-${kernelRelease}.rpm ]]; then 
-      koji download-build --rpm --arch=${processorType} \
-          kernel-modules-${kernelRelease}
-    fi
-    cp kernel-modules-${kernelRelease}.rpm ${targetDir}
-  popd
 
   # Create Dockerfile staging dir
   if [[ ! -e ${targetDir}/Dockerfile ]]; then
     cp templates/Dockerfile ${targetDir}/
-    sed -i "s/%DOCKER_FROM_IMAGE_NAME%/${dockerFrom}/" ${targetDir}/Dockerfile
+    sed -i "s/%DOCKER_FROM_IMAGE_NAME%/${dockerFrom}/g" ${targetDir}/Dockerfile
+    sed -i "s/%PROCESSOR_ARCH%/${processorType}/g" ${targetDir}/Dockerfile
     sed -i "s/%KERNEL_RELEASE%/${kernelRelease}/g" ${targetDir}/Dockerfile
   fi
  
@@ -206,7 +212,7 @@ build_dockerimage() {
 }
 
 run_command() {
-  local _RELEASE_BRANCH=${RELEASE_BRANCH:-'0.7-release'}
+  local _RELEASE_BRANCH=${RELEASE_BRANCH:-'0.7.9'}
   local _ZFS_BRANCH=${ZFS_BRANCH:-"zfs-${_RELEASE_BRANCH}"}
   local _SPL_BRANCH=${SPL_BRANCH:-"spl-${_RELEASE_BRANCH}"}
   local _DOCKER_FROM_IMAGE_NAME='fedora:28'
@@ -218,8 +224,11 @@ run_command() {
     'clean')
       run_clean "$@"
       ;;
-    'build_dockerimage')
+    'dockerimage')
       build_dockerimage "$@"
+      ;;
+    'shell')
+      run_shell "$@"
       ;;
     'build')
       run_build "$@"
@@ -262,16 +271,13 @@ main_function() {
   local _projectDir
   local _workspaceDir
   local _targetDir
-  local _rpmCacheDir
 
   _invocationDir=$(dirname $(realpath $0))
   _projectDir=${_invocationDir}
   _projectName=$(basename ${_projectDir})
   _workspaceDir=$(realpath ${_projectDir}/..)
   _targetDir=${_projectDir}/target
-  _rpmCacheDir=${_workspaceDir}/.rpm_cache
-
-  mkdir -p ${_rpmCacheDir}
+  mkdir -p ${_targetDir}
 
   run_command "$@"
 }
