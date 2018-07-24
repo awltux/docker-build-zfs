@@ -37,7 +37,7 @@ RUN yum localinstall -y \
 #    make prepare
 
 # Change this to trigger and effectively date/tag a full re-build
-LABEL build="20180718001"
+LABEL build="%CURRENT_DATESTAMP%"
 
 # Create an updated image; improves build times
 RUN yum -y update

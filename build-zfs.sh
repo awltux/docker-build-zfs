@@ -55,17 +55,14 @@ build_spl() {
       ./autogen.sh
       ./configure \
         --with-linux=/usr/src/kernels/${kernelRelease} \
-        --with-linux-obj=/usr/src/kernels/${kernelRelease} \
-	--enable-linux-builtin=yes 
-#      ./copy-builtin /usr/src/kernels/${kernelRelease}
-      make -s -j$(nproc) rpm
-#      make -j1 pkg-utils pkg-kmod
-#      # FIXME: No idea why 'make module' isn't creating 'module/Module.symvers'
-#      cd module
-#      make 
+        --with-linux-obj=/usr/src/kernels/${kernelRelease} 
+#	--enable-linux-builtin=yes 
+      make -s -j$(nproc) rpm-kmod rpm-utils
       yum localinstall -y \
          kmod-spl-${kernelRelease}-${_RELEASE_BRANCH}*.rpm \
-         spl-${kernelRelease}*.${processorType}.rpm 
+         kmod-spl-devel-${_RELEASE_BRANCH}*.rpm \
+         kmod-spl-devel-${kernelRelease}-${_RELEASE_BRANCH}*.rpm \
+         spl-${_RELEASE_BRANCH}*.${processorType}.rpm 
   popd
 
 }
@@ -83,16 +80,15 @@ build_zfs() {
       ./configure \
         --with-linux=/usr/src/kernels/${kernelRelease} \
         --with-linux-obj=/usr/src/kernels/${kernelRelease}
-      make -s -j$(nproc) rpm
-#      make -j1 pkg-utils pkg-kmod
-      yum localinstall -y
-         kmod-zfs-${kernelRelease}-${_RELEASE_BRANCH}*.${processorType}.rpm \
-         zfs-${_RELEASE_BRANCH}*.${processorType}.rpm \
-         libnvpair1-${_RELEASE_BRANCH}*.${processorType}.rpm \
-         libuutil1-${_RELEASE_BRANCH}*.${processorType}.rpm \
-         libzfs2-${_RELEASE_BRANCH}*.${processorType}.rpm \
-         libzpool2-${_RELEASE_BRANCH}*.${processorType}.rpm \
-         zfs-dracut-${_RELEASE_BRANCH}*.${processorType}.rpm
+      make -j$(nproc) rpm-kmod rpm-utils
+ #     yum localinstall -y
+ #        kmod-zfs-${kernelRelease}-${_RELEASE_BRANCH}*.${processorType}.rpm \
+ #        zfs-${_RELEASE_BRANCH}*.${processorType}.rpm \
+ #        libnvpair1-${_RELEASE_BRANCH}*.${processorType}.rpm \
+ #        libuutil1-${_RELEASE_BRANCH}*.${processorType}.rpm \
+ #        libzfs2-${_RELEASE_BRANCH}*.${processorType}.rpm \
+ #        libzpool2-${_RELEASE_BRANCH}*.${processorType}.rpm \
+ #        zfs-dracut-${_RELEASE_BRANCH}*.${processorType}.rpm
   popd
 
 }
@@ -117,6 +113,8 @@ run_build() {
   local kernelRelease
   kernelRelease=${2:-"$(uname -r)"}
   local dockerOutput
+  
+  build_dockerimage
   
   pushd ${_targetDir}
       # Update/Get the spl source code
@@ -200,10 +198,16 @@ build_dockerimage() {
 
   # Create Dockerfile staging dir
   if [[ ! -e ${targetDir}/Dockerfile ]]; then
+    local currentDatestamp
+    currentDatestamp=$(date +%Y%m%d%H%M%S)
+
     cp templates/Dockerfile ${targetDir}/
     sed -i "s/%DOCKER_FROM_IMAGE_NAME%/${dockerFrom}/g" ${targetDir}/Dockerfile
     sed -i "s/%PROCESSOR_ARCH%/${processorType}/g" ${targetDir}/Dockerfile
     sed -i "s/%KERNEL_RELEASE%/${kernelRelease}/g" ${targetDir}/Dockerfile
+    if [[ "${UPDATE_YUM}" == "1" ]]; then
+      sed -i "s/%CURRENT_DATESTAMP%/${currentDatestamp}/g" ${targetDir}/Dockerfile
+    fi
   fi
  
   # Build Docker image from staging dir
@@ -216,6 +220,7 @@ run_command() {
   local _ZFS_BRANCH=${ZFS_BRANCH:-"zfs-${_RELEASE_BRANCH}"}
   local _SPL_BRANCH=${SPL_BRANCH:-"spl-${_RELEASE_BRANCH}"}
   local _DOCKER_FROM_IMAGE_NAME='fedora:28'
+  local _UPDATE_YUM=${UPDATE_YUM:-'0'}
 
   case "${_scriptCommand}" in
     'all')
